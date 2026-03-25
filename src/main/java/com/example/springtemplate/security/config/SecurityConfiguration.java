@@ -93,12 +93,15 @@ public class SecurityConfiguration {
                 // STEP 3: Define authorization rules (top-to-bottom evaluation, first match wins)
                 .authorizeHttpRequests(request ->
                         request
-                                // Rule 1: Public endpoints (no authentication required)
+                                // Public endpoints
                                 .requestMatchers("/error", "/api/v1/auth/**", "/chat", "/chat/**").permitAll()
-                                // Rule 2: Admin-only resource creation
+                                // Admin-only
                                 .requestMatchers(HttpMethod.POST, "/api/v1/resource").hasRole("ADMIN")
-                                // Rule 3: Catch-all (all other endpoints require authentication)
-                                .anyRequest().authenticated())
+                                // Game endpoints — must be logged in
+                                .requestMatchers("/api/game/**").authenticated()
+                                // Everything else — must be logged in
+                                .anyRequest().authenticated()
+                )
                 // STEP 4: Use stateless session policy (no server-side sessions)
                 // Each request is independent; state is in JWT token only
                 .sessionManagement(manager -> manager.sessionCreationPolicy(STATELESS))
