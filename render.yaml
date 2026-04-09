@@ -6,10 +6,8 @@ databases:
 services:
   - type: web
     name: battleships-backend
-    runtime: java
+    runtime: docker
     plan: free
-    buildCommand: mvn clean package -DskipTests
-    startCommand: java -jar target/*.jar
     healthCheckPath: /actuator/health
     envVars:
       - key: PGHOST
