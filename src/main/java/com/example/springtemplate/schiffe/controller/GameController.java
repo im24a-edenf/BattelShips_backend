@@ -2,7 +2,9 @@ package com.example.springtemplate.schiffe.controller;
 
 import com.example.springtemplate.schiffe.dto.*;
 import com.example.springtemplate.schiffe.service.GameService;
+import com.example.springtemplate.user.User;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -83,5 +85,68 @@ public class GameController {
         } catch (SecurityException e) {
             return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
         }
+    }
+
+    // ── POST /api/game/{id}/place/multi ──────────────────────────────────────
+
+    @PostMapping("/{id}/place/multi")
+    public ResponseEntity<?> placeShipsMultiplayer(
+            @PathVariable String id,
+            @RequestBody List<PlacementRequest> requests) {
+        try {
+            User currentUser = getCurrentUser();
+            List<String> errors = gameService.placeShipsMultiplayer(id, requests, currentUser);
+            if (errors.isEmpty()) {
+                return ResponseEntity.ok(Map.of("success", true));
+            } else {
+                return ResponseEntity.badRequest().body(Map.of("success", false, "errors", errors));
+            }
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        } catch (SecurityException e) {
+            return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // ── POST /api/game/{id}/fire/multi ───────────────────────────────────────
+
+    @PostMapping("/{id}/fire/multi")
+    public ResponseEntity<?> fireMultiplayer(
+            @PathVariable String id,
+            @RequestBody FireRequest request) {
+        try {
+            User currentUser = getCurrentUser();
+            FireResponse response = gameService.fireMultiplayer(id, request.getX(), request.getY(), currentUser);
+            return ResponseEntity.ok(response);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        } catch (SecurityException e) {
+            return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
+        } catch (IllegalArgumentException | IllegalStateException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // ── GET /api/game/{id}/state/multi ───────────────────────────────────────
+
+    @GetMapping("/{id}/state/multi")
+    public ResponseEntity<?> getStateMultiplayer(@PathVariable String id) {
+        try {
+            User currentUser = getCurrentUser();
+            GameStateResponse state = gameService.getStateMultiplayer(id, currentUser);
+            return ResponseEntity.ok(state);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        } catch (SecurityException e) {
+            return ResponseEntity.status(403).body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // ── Helper ───────────────────────────────────────────────────────────────
+
+    private User getCurrentUser() {
+        return (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
     }
 }

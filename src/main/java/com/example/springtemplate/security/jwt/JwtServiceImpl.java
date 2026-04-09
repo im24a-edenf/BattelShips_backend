@@ -194,12 +194,13 @@ public class JwtServiceImpl implements JwtService {
         // Browser cannot access via JavaScript (httpOnly=true) - prevents XSS attacks
         // Only sent over HTTPS (secure=true)
         // Not sent to other domains (sameSite=Strict) - prevents CSRF attacks
+        boolean isProd = Boolean.parseBoolean(System.getenv().getOrDefault("PRODUCTION", "false"));
         return ResponseCookie.from(jwtCookieName, jwt)
                 .path("/")  // Cookie valid for all application paths
                 .maxAge(jwtCookieMaxAge)  // How long browser keeps the cookie
                 .httpOnly(true)  // JavaScript cannot read this cookie
-                .secure(true)  // Only sent over HTTPS
-                .sameSite("Strict")  // Not sent in cross-site requests
+                .secure(isProd)  // HTTPS only in production
+                .sameSite(isProd ? "None" : "Lax")  // None required for cross-domain (Vercel → Railway)
                 .build();
     }
 

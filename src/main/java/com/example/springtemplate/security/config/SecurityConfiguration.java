@@ -48,6 +48,7 @@ public class SecurityConfiguration {
     private final AuthenticationProvider authenticationProvider;
     private final Http401UnauthorizedEntryPoint unauthorizedEntryPoint;
     private final CustomAccessDeniedHandler accessDeniedHandler;
+    private final CorsConfigurationValues corsConfigurationValues;
 
     /**
      * Configures the Spring Security filter chain and authorization rules for the REST API.
@@ -94,7 +95,7 @@ public class SecurityConfiguration {
                 .authorizeHttpRequests(request ->
                         request
                                 // Public endpoints
-                                .requestMatchers("/error", "/api/v1/auth/**", "/chat", "/chat/**").permitAll()
+                                .requestMatchers("/error", "/api/v1/auth/**", "/chat", "/chat/**", "/ws/**", "/actuator/health").permitAll()
                                 // Admin-only
                                 .requestMatchers(HttpMethod.POST, "/api/v1/resource").hasRole("ADMIN")
                                 // Game endpoints — must be logged in
@@ -117,7 +118,7 @@ public class SecurityConfiguration {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(CorsConfigurationValues.ALLOWED_ORIGINS);
+        configuration.setAllowedOrigins(corsConfigurationValues.getAllowedOrigins());
         configuration.setAllowedMethods(CorsConfigurationValues.ALLOWED_METHODS);
         configuration.setAllowedHeaders(CorsConfigurationValues.ALLOWED_HEADERS);
         configuration.setAllowCredentials(true);

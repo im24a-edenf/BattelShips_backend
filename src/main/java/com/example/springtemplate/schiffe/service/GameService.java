@@ -3,6 +3,7 @@ package com.example.springtemplate.schiffe.service;
 import com.example.springtemplate.schiffe.dto.*;
 import com.example.springtemplate.schiffe.model.*;
 import com.example.springtemplate.schiffe.model.enums.*;
+import com.example.springtemplate.schiffe.websocket.WebSocketEventPublisher;
 import com.example.springtemplate.user.User;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -16,13 +17,18 @@ public class GameService {
 
     private final ValidationService validationService;
     private final BotService botService;
+    private final LobbyService lobbyService;
+    private final WebSocketEventPublisher eventPublisher;
 
     // In-memory game store — keyed by gameId
     private final Map<String, Game> games = new HashMap<>();
 
-    public GameService(ValidationService validationService, BotService botService) {
+    public GameService(ValidationService validationService, BotService botService,
+                       LobbyService lobbyService, WebSocketEventPublisher eventPublisher) {
         this.validationService = validationService;
         this.botService = botService;
+        this.lobbyService = lobbyService;
+        this.eventPublisher = eventPublisher;
     }
 
     // ── Create game ──────────────────────────────────────────────────────────
@@ -148,13 +154,146 @@ public class GameService {
         return response;
     }
 
+    // ── Multiplayer: place ships ─────────────────────────────────────────────
+
+    public List<String> placeShipsMultiplayer(String gameId, List<PlacementRequest> requests,
+                                               User currentUser) {
+        MultiplayerGame game = lobbyService.getGameForPlayer(gameId, currentUser.getId());
+
+        if (game.getPhase() != GamePhase.PLACEMENT && game.getPhase() != GamePhase.WAITING_FOR_PLACEMENT) {
+            return List.of("Schiffe können jetzt nicht mehr platziert werden.");
+        }
+
+        List<String> errors = validationService.validatePlacements(requests);
+        if (!errors.isEmpty()) {
+            return errors;
+        }
+
+        Board board = game.getBoardFor(currentUser.getId());
+        if (!board.getShips().isEmpty()) {
+            resetBoard(board);
+        }
+
+        for (PlacementRequest req : requests) {
+            Ship ship = new Ship(req.getShipType(), req.getX(), req.getY(), req.isHorizontal());
+            board.placeShip(ship);
+        }
+
+        // Mark this player as ready
+        if (game.getPlayerOneId().equals(currentUser.getId())) {
+            game.setPlayerOneReady(true);
+        } else {
+            game.setPlayerTwoReady(true);
+        }
+
+        if (game.isBothReady()) {
+            game.setPhase(GamePhase.BATTLE);
+            game.setCurrentTurn(game.getPlayerOneId());
+            eventPublisher.publishToGame(gameId,
+                    new BothReadyEvent(game.getPlayerOneEmail(), gameId));
+        } else {
+            game.setPhase(GamePhase.WAITING_FOR_PLACEMENT);
+        }
+
+        return Collections.emptyList();
+    }
+
+    // ── Multiplayer: fire ────────────────────────────────────────────────────
+
+    public FireResponse fireMultiplayer(String gameId, int x, int y, User currentUser) {
+        MultiplayerGame game = lobbyService.getGameForPlayer(gameId, currentUser.getId());
+
+        if (game.getPhase() != GamePhase.BATTLE) {
+            throw new IllegalStateException("Das Spiel ist nicht in der Kampfphase.");
+        }
+
+        if (!game.isPlayerTurn(currentUser.getId())) {
+            throw new IllegalStateException("Nicht dein Zug.");
+        }
+
+        Board opponentBoard = game.getOpponentBoard(currentUser.getId());
+        String shotError = validationService.validateShot(x, y, opponentBoard);
+        if (shotError != null) {
+            throw new IllegalArgumentException(shotError);
+        }
+
+        Cell hitCell = opponentBoard.receiveShot(x, y);
+        ShotResultDTO shotResult = buildShotResult(x, y, hitCell);
+        game.getShotsFor(currentUser.getId()).add(toShot(shotResult));
+
+        boolean gameOver = opponentBoard.allShipsSunk();
+        String winnerEmail = null;
+        String winnerRole = null;
+
+        if (gameOver) {
+            winnerEmail = currentUser.getUsername();
+            winnerRole = game.getRoleFor(currentUser.getId());
+            game.setWinnerId(currentUser.getId());
+            game.setWinnerEmail(winnerEmail);
+            game.setPhase(GamePhase.FINISHED);
+            eventPublisher.publishToGame(gameId, new GameOverEvent(winnerEmail, winnerRole));
+        } else {
+            game.switchTurn();
+        }
+
+        ShotFiredEvent shotEvent = new ShotFiredEvent(
+                currentUser.getUsername(),
+                game.getRoleFor(currentUser.getId()),
+                shotResult,
+                game.getNextTurnEmail(),
+                game.getNextTurnRole(),
+                winnerEmail,
+                gameOver
+        );
+        eventPublisher.publishToGame(gameId, shotEvent);
+
+        FireResponse response = new FireResponse();
+        response.setPlayerShot(shotResult);
+        response.setBotShot(null);
+        response.setWinner(winnerEmail);
+        response.setGamePhase(game.getPhase().name());
+        return response;
+    }
+
+    // ── Multiplayer: get state ───────────────────────────────────────────────
+
+    public GameStateResponse getStateMultiplayer(String gameId, User currentUser) {
+        MultiplayerGame game = lobbyService.getGameForPlayer(gameId, currentUser.getId());
+
+        Board myBoard = game.getBoardFor(currentUser.getId());
+        Board opponentBoard = game.getOpponentBoard(currentUser.getId());
+
+        GameStateResponse response = new GameStateResponse();
+        response.setGameId(game.getId());
+        response.setPhase(game.getPhase().name());
+        response.setDifficulty(null);
+        response.setWinner(game.getWinnerEmail());
+
+        response.setPlayerBoard(myBoard.getFullView());
+        response.setPlayerShips(
+                myBoard.getShips().stream()
+                        .map(ShipDTO::from)
+                        .collect(Collectors.toList())
+        );
+
+        response.setBotBoard(opponentBoard.getFogOfWarView());
+        response.setBotShips(
+                opponentBoard.getShips().stream()
+                        .filter(Ship::isSunk)
+                        .map(ShipDTO::from)
+                        .collect(Collectors.toList())
+        );
+
+        return response;
+    }
+
     // ── Security helpers ─────────────────────────────────────────────────────
 
     /**
      * Returns the currently authenticated User from the SecurityContext.
      * Spring Security puts the User object there after JWT validation.
      */
-    private User getCurrentUser() {
+    public User getCurrentUser() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !authentication.isAuthenticated()) {
             throw new IllegalStateException("Kein authentifizierter Benutzer gefunden.");
